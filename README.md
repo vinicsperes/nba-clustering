@@ -1,10 +1,5 @@
 # Análise Comparativa de Algoritmos de Clustering — NBA Player Archetypes
 
-Código-fonte do Trabalho de Conclusão de Curso em Sistemas de Informação (IFC — Campus Araquari).
-
-- **Autor:** Vinicius Peres
-- **Orientador:** Paulo Cesar Fernandes de Oliveira
-
 ## Sobre
 
 Este projeto compara três algoritmos de clustering — **K-Means**, **Gaussian Mixture Models (GMM)** e **Clustering Hierárquico Aglomerativo** — aplicados a dados de desempenho de jogadores da NBA (temporada 2024-25), com o objetivo de identificar arquétipos de jogadores e determinar qual algoritmo produz agrupamentos de maior qualidade.
