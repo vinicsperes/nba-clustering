@@ -12,6 +12,7 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
+from scipy.stats import friedmanchisquare, wilcoxon
 from sklearn.metrics import (
     silhouette_score,
     silhouette_samples,
@@ -326,6 +327,126 @@ def compute_stability(
         "bootstrap_mean_ari": bootstrap_mean_ari,
         "point_stability": mean_point_stability,
     }
+
+
+def compute_paired_bootstrap_aris(
+    X: np.ndarray,
+    algorithms: List[str],
+    ks: Dict[str, int],
+    n_bootstrap: int = VALIDATION_CONFIG["bootstrap_iterations"],
+    bootstrap_frac: float = VALIDATION_CONFIG["bootstrap_sample_fraction"],
+    seed: int = 42,
+) -> pd.DataFrame:
+    """
+    Bootstrap pareado para comparação estatística entre algoritmos.
+
+    A diferença para `compute_stability` é que aqui *todas* as iterações usam
+    a mesma amostra para *todos* os algoritmos. Isso produz três séries de
+    ARIs pareadas por índice de iteração — formato exigido pelo teste de
+    Friedman e pelo Wilcoxon.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Dados normalizados.
+    algorithms : List[str]
+        Lista de algoritmos: subset de {"kmeans", "gmm", "hierarchical"}.
+    ks : Dict[str, int]
+        Mapeamento algoritmo -> número de clusters a usar.
+    n_bootstrap : int
+        Número de iterações bootstrap.
+    bootstrap_frac : float
+        Fração de dados em cada amostra (com reposição).
+    seed : int
+        Semente do RNG.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame com colunas = algoritmos e n_bootstrap linhas. Linha i =
+        ARI de cada algoritmo na iteração i (mesma amostra).
+    """
+    rng = np.random.RandomState(seed)
+    n_samples = X.shape[0]
+    bootstrap_size = int(n_samples * bootstrap_frac)
+
+    references = {algo: _fit_algorithm(algo, X, ks[algo], seed=42) for algo in algorithms}
+
+    rows = []
+    for _ in range(n_bootstrap):
+        indices = rng.choice(n_samples, size=bootstrap_size, replace=True)
+        X_boot = X[indices]
+        row = {}
+        for algo in algorithms:
+            boot_labels = _fit_algorithm(algo, X_boot, ks[algo], seed=42)
+            ref_sub = references[algo][indices]
+            row[algo] = adjusted_rand_score(ref_sub, boot_labels)
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def friedman_test(ari_df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Teste de Friedman não-paramétrico nas ARIs bootstrap pareadas.
+
+    H0: as distribuições de ARI dos algoritmos são equivalentes.
+    H1: pelo menos um algoritmo difere.
+
+    Se p < 0.05, rejeita-se H0. Pós-teste recomendado: Wilcoxon pareado
+    com correção de Bonferroni para identificar quais pares diferem
+    (Demšar, 2006, JMLR).
+
+    Parameters
+    ----------
+    ari_df : pd.DataFrame
+        DataFrame retornado por `compute_paired_bootstrap_aris`.
+
+    Returns
+    -------
+    Dict[str, float]
+        statistic, p_value, n_blocks, n_treatments e médias por algoritmo.
+    """
+    columns = list(ari_df.columns)
+    arrays = [ari_df[c].values for c in columns]
+    stat, p = friedmanchisquare(*arrays)
+    means = {c: float(ari_df[c].mean()) for c in columns}
+    return {
+        "statistic": float(stat),
+        "p_value": float(p),
+        "n_blocks": len(ari_df),
+        "n_treatments": len(columns),
+        "means": means,
+        "reject_h0": bool(p < 0.05),
+    }
+
+
+def wilcoxon_pairwise(ari_df: pd.DataFrame, alpha: float = 0.05) -> pd.DataFrame:
+    """
+    Wilcoxon pareado entre todos os pares de algoritmos, com Bonferroni.
+
+    Pós-teste do Friedman (Demšar, 2006). Reporta p-valor bruto e p
+    corrigido (Bonferroni: p_adj = p * n_pares).
+    """
+    cols = list(ari_df.columns)
+    rows = []
+    n_pairs = len(cols) * (len(cols) - 1) // 2
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            a, b = cols[i], cols[j]
+            stat, p = wilcoxon(ari_df[a].values, ari_df[b].values)
+            p_adj = min(p * n_pairs, 1.0)
+            rows.append({
+                "A": a,
+                "B": b,
+                "mean_A": float(ari_df[a].mean()),
+                "mean_B": float(ari_df[b].mean()),
+                "statistic": float(stat),
+                "p_value": float(p),
+                "p_bonferroni": float(p_adj),
+                "significant": bool(p_adj < alpha),
+            })
+    return pd.DataFrame(rows)
 
 
 def validate_clustering(

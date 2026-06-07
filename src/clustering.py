@@ -112,6 +112,10 @@ class GMMClusterer:
 
     Atribui probabilidades de pertencimento a cada cluster, permitindo
     identificar jogadores híbridos com perfil em múltiplos arquétipos.
+
+    A seleção do número de componentes é feita pelo BIC por padrão
+    (recomendação de Géron, 2025, p. 275: o Silhouette não é confiável
+    para GMM porque os clusters não são necessariamente esféricos).
     """
 
     def __init__(
@@ -121,12 +125,18 @@ class GMMClusterer:
         n_init: int = GMM_CONFIG["n_init"],
         max_iter: int = GMM_CONFIG["max_iter"],
         random_state: int = GMM_CONFIG["random_state"],
+        selection_metric: str = "bic",
     ):
+        if selection_metric not in {"bic", "silhouette"}:
+            raise ValueError(
+                f"selection_metric deve ser 'bic' ou 'silhouette', recebido: {selection_metric}"
+            )
         self.k_range = k_range
         self.covariance_type = covariance_type
         self.n_init = n_init
         self.max_iter = max_iter
         self.random_state = random_state
+        self.selection_metric = selection_metric
         self.best_k: Optional[int] = None
         self._results: Dict[int, ClusteringResult] = {}
 
@@ -140,10 +150,9 @@ class GMMClusterer:
 
     def fit(self, X: np.ndarray) -> "GMMClusterer":
         print("\n" + "=" * 50)
-        print("GMM (Gaussian Mixture Models)")
+        print(f"GMM (Gaussian Mixture Models) — selection_metric={self.selection_metric}")
         print("=" * 50)
 
-        best_sil = -1
         for k in self.k_range:
             model = GaussianMixture(
                 n_components=k,
@@ -168,11 +177,20 @@ class GMMClusterer:
             )
             print(f"  k={k:2d}: Silhouette={sil:.3f}, BIC={bic:.1f}")
 
-            if sil > best_sil:
-                best_sil = sil
-                self.best_k = k
-
-        print(f"\n  Melhor k: {self.best_k} (Silhouette={best_sil:.3f})")
+        if self.selection_metric == "bic":
+            self.best_k = min(self._results, key=lambda k: self._results[k].bic)
+            print(
+                f"\n  Melhor k: {self.best_k} "
+                f"(BIC={self._results[self.best_k].bic:.1f}, "
+                f"Silhouette={self._results[self.best_k].silhouette:.3f})"
+            )
+        else:
+            self.best_k = max(self._results, key=lambda k: self._results[k].silhouette)
+            print(
+                f"\n  Melhor k: {self.best_k} "
+                f"(Silhouette={self._results[self.best_k].silhouette:.3f}, "
+                f"BIC={self._results[self.best_k].bic:.1f})"
+            )
         return self
 
     def get_best_result(self) -> ClusteringResult:

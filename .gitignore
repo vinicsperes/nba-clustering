@@ -11,6 +11,8 @@ env/
 
 # Jupyter
 .ipynb_checkpoints/
+notebooks/analysis.pdf
+notebooks/analysis.html
 
 # IDE / tools
 .vscode/
