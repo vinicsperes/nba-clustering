@@ -257,12 +257,22 @@ def main(
     kmeans_model = clustering_results["kmeans_model"]
     elbow_data = kmeans_model.get_elbow_data()
 
+    # Dados do GMM para a curva do BIC
+    gmm_model = clustering_results["gmm_model"]
+    bic_data = gmm_model.get_bic_data()
+
     analysis_results = {
         "kmeans": {
             "k_values": elbow_data["k"].tolist(),
             "inertias": elbow_data["inertia"].tolist(),
             "silhouettes": elbow_data["silhouette"].tolist(),
             "optimal_k": kmeans_result.k,
+        },
+        "gmm": {
+            "k_values": bic_data["k"].tolist(),
+            "bics": bic_data["bic"].tolist(),
+            "silhouettes": bic_data["silhouette"].tolist(),
+            "optimal_k": gmm_result.k,
         },
         "hierarchical": {
             "linkage_matrix": hier_result.linkage_matrix,

@@ -89,6 +89,122 @@ def plot_elbow_curve(
 
 
 
+def plot_bic_curve(
+    k_values: List[int],
+    bics: List[float],
+    silhouettes: List[float],
+    optimal_k: int = None,
+    save_path: Optional[Path] = None
+) -> plt.Figure:
+    """
+    Plot BIC curve for GMM component selection.
+
+    Parameters
+    ----------
+    k_values : List[int]
+        List of k values tested
+    bics : List[float]
+        BIC for each k (lower is better)
+    silhouettes : List[float]
+        Silhouette score for each k (informational only)
+    optimal_k : int, optional
+        Optimal k value to highlight
+    save_path : Path, optional
+        Path to save the figure
+
+    Returns
+    -------
+    plt.Figure
+        Matplotlib figure
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # BIC curve (lower is better)
+    ax1.plot(k_values, bics, 'bo-', linewidth=2, markersize=8)
+    ax1.set_xlabel('Número de Componentes (k)', fontsize=12)
+    ax1.set_ylabel('BIC', fontsize=12)
+    ax1.set_title('Critério de Informação Bayesiano (BIC)', fontsize=14)
+    ax1.grid(True, alpha=0.3)
+
+    if optimal_k:
+        idx = k_values.index(optimal_k)
+        ax1.axvline(x=optimal_k, color='r', linestyle='--', label=f'k ótimo = {optimal_k}')
+        ax1.scatter([optimal_k], [bics[idx]], color='r', s=200, zorder=5)
+        ax1.legend()
+
+    # Silhouette score (informational, not used for selection)
+    ax2.plot(k_values, silhouettes, 'go-', linewidth=2, markersize=8)
+    ax2.set_xlabel('Número de Componentes (k)', fontsize=12)
+    ax2.set_ylabel('Silhouette Score', fontsize=12)
+    ax2.set_title('Silhouette Score por k (informativo)', fontsize=14)
+    ax2.grid(True, alpha=0.3)
+
+    if optimal_k:
+        idx = k_values.index(optimal_k)
+        ax2.axvline(x=optimal_k, color='r', linestyle='--', label=f'k ótimo = {optimal_k}')
+        ax2.scatter([optimal_k], [silhouettes[idx]], color='r', s=200, zorder=5)
+        ax2.legend()
+
+    plt.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=VIZ_CONFIG["dpi"], bbox_inches='tight')
+        print(f"Figure saved to {save_path}")
+
+    return fig
+
+
+def plot_correlation_matrix(
+    X: np.ndarray,
+    feature_names: List[str],
+    save_path: Optional[Path] = None
+) -> plt.Figure:
+    """
+    Plot correlation matrix heatmap of the clustering features.
+
+    Correlation is scale-invariant, so standardized or raw features
+    produce the same matrix.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Feature matrix
+    feature_names : List[str]
+        Names of features
+    save_path : Path, optional
+        Path to save the figure
+
+    Returns
+    -------
+    plt.Figure
+        Matplotlib figure
+    """
+    corr = pd.DataFrame(X, columns=feature_names).corr()
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    sns.heatmap(
+        corr,
+        annot=True,
+        fmt='.2f',
+        cmap='coolwarm',
+        vmin=-1,
+        vmax=1,
+        square=True,
+        linewidths=0.5,
+        cbar_kws={'label': 'Correlação de Pearson'},
+        ax=ax,
+    )
+    ax.set_title('Matriz de Correlação das Features', fontsize=14)
+
+    plt.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=VIZ_CONFIG["dpi"], bbox_inches='tight')
+        print(f"Figure saved to {save_path}")
+
+    return fig
+
+
 def plot_dendrogram(
     linkage_matrix: np.ndarray,
     n_clusters: int = None,
@@ -590,6 +706,13 @@ def create_all_visualizations(
 
     print("\nCreating visualizations...")
 
+    # Correlation matrix of the clustering features (EDA)
+    plot_correlation_matrix(
+        X,
+        feature_names,
+        save_path=output_dir / "correlation_matrix.png"
+    )
+
     # K-Means specific plots (elbow curve)
     if "kmeans" in analysis_results:
         kmeans_results = analysis_results["kmeans"]
@@ -599,6 +722,17 @@ def create_all_visualizations(
             kmeans_results["silhouettes"],
             optimal_k=kmeans_results["optimal_k"],
             save_path=output_dir / "kmeans_elbow.png"
+        )
+
+    # GMM specific plots (BIC curve)
+    if "gmm" in analysis_results:
+        gmm_results = analysis_results["gmm"]
+        plot_bic_curve(
+            gmm_results["k_values"],
+            gmm_results["bics"],
+            gmm_results["silhouettes"],
+            optimal_k=gmm_results["optimal_k"],
+            save_path=output_dir / "gmm_bic.png"
         )
 
     # Hierarchical specific plots (dendrogram)

@@ -266,8 +266,9 @@ def run_clustering(X: np.ndarray) -> Dict[str, object]:
 
     Returns
     -------
-    dict com chaves: "kmeans", "gmm", "hierarchical" (ClusteringResult)
-    e "kmeans_model" (KMeansClusterer, necessário para os dados do elbow).
+    dict com chaves: "kmeans", "gmm", "hierarchical" (ClusteringResult),
+    "kmeans_model" (KMeansClusterer, necessário para os dados do elbow)
+    e "gmm_model" (GMMClusterer, necessário para os dados do BIC).
     """
     kmeans = KMeansClusterer()
     kmeans.fit(X)
@@ -283,6 +284,7 @@ def run_clustering(X: np.ndarray) -> Dict[str, object]:
         "gmm": gmm.get_best_result(),
         "hierarchical": hier.get_best_result(),
         "kmeans_model": kmeans,
+        "gmm_model": gmm,
     }
 
 
