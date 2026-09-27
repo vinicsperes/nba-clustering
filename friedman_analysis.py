@@ -1,10 +1,11 @@
 """
 Teste estatístico formal de comparação dos algoritmos — Friedman + Wilcoxon.
 
-Justificativa metodológica: a comparação atual é "K-Means vence em todas as
-métricas internas". Tecnicamente correto, mas não tem teste estatístico
-formal. Demšar (2006, JMLR) recomenda o teste de Friedman para comparação
-de múltiplos algoritmos no mesmo conjunto de dados.
+O teste de Friedman (Demšar, 2006, JMLR) compara os três algoritmos sobre
+as mesmas medidas pareadas. Aqui, as medidas são os ARIs de 100 réplicas de
+bootstrap do mesmo conjunto de dados; por isso o p-valor deve ser lido como
+evidência de diferença sob reamostragem (ver a discussão dos limites na
+monografia).
 
 Este script:
   1. Roda 100 iterações de bootstrap *pareado* — todas as iterações usam a
