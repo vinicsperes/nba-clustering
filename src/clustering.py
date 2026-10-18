@@ -108,7 +108,7 @@ class KMeansClusterer:
 
 class GMMClusterer:
     """
-    Gaussian Mixture Models — soft clustering.
+    Gaussian Mixture Models: soft clustering.
 
     Atribui probabilidades de pertencimento a cada cluster, permitindo
     identificar jogadores híbridos com perfil em múltiplos arquétipos.
@@ -150,7 +150,7 @@ class GMMClusterer:
 
     def fit(self, X: np.ndarray) -> "GMMClusterer":
         print("\n" + "=" * 50)
-        print(f"GMM (Gaussian Mixture Models) — selection_metric={self.selection_metric}")
+        print(f"GMM (Gaussian Mixture Models), selection_metric={self.selection_metric}")
         print("=" * 50)
 
         for k in self.k_range:
@@ -266,9 +266,9 @@ def run_clustering(X: np.ndarray) -> Dict[str, object]:
 
     Returns
     -------
-    dict com chaves: "kmeans", "gmm", "hierarchical" (ClusteringResult),
-    "kmeans_model" (KMeansClusterer, necessário para os dados do elbow)
-    e "gmm_model" (GMMClusterer, necessário para os dados do BIC).
+    dict com chaves: "kmeans", "gmm", "hierarchical" (ClusteringResult)
+    e "kmeans_model", "gmm_model", "hier_model" (os objetos ajustados, com
+    as métricas de cada k testado).
     """
     kmeans = KMeansClusterer()
     kmeans.fit(X)
@@ -285,6 +285,7 @@ def run_clustering(X: np.ndarray) -> Dict[str, object]:
         "hierarchical": hier.get_best_result(),
         "kmeans_model": kmeans,
         "gmm_model": gmm,
+        "hier_model": hier,
     }
 
 
@@ -311,17 +312,24 @@ def get_cluster_profiles(
 
 
 def get_cluster_examples(
+    X: np.ndarray,
     labels: np.ndarray,
     player_names: List[str],
     n_examples: int = 5,
 ) -> Dict[int, List[str]]:
-    """Retorna exemplos de jogadores por cluster."""
+    """
+    Retorna os jogadores mais típicos de cada cluster: os mais próximos do
+    centroide no espaço normalizado.
+    """
     examples = {}
     for cluster in np.unique(labels):
         if cluster == -1:
             continue
         indices = np.where(labels == cluster)[0]
-        examples[cluster] = [player_names[i] for i in indices[:n_examples]]
+        centroid = X[indices].mean(axis=0)
+        distances = np.linalg.norm(X[indices] - centroid, axis=1)
+        closest = indices[np.argsort(distances)[:n_examples]]
+        examples[int(cluster)] = [player_names[i] for i in closest]
     return examples
 
 

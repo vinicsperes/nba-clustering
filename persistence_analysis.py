@@ -2,10 +2,8 @@
 Análise de persistência dos arquétipos entre temporadas (2024-25 -> 2025-26).
 
 Pergunta: os mesmos arquétipos reaparecem na temporada seguinte e os jogadores
-permanecem no mesmo arquétipo? Responde a duas limitações declaradas na
-conclusão (análise de uma única temporada e ausência de validação temporal) e
-dialoga com Edwards-Thro (2021), que mediu consistência de cluster entre
-temporadas (62,95%).
+permanecem no mesmo arquétipo? Dialoga com Edwards-Thro (2021), que mediu
+consistência de cluster entre temporadas (62,95%).
 
 Procedimento:
   1. Clusteriza cada temporada de forma independente com K-Means k=3
@@ -15,11 +13,11 @@ Procedimento:
      Rotação = o restante), de modo que a numeração do K-Means (arbitrária) não
      contamine a comparação.
   3. Para os jogadores presentes nas duas temporadas, mede quantos mantiveram
-     o arquétipo e reporta a matriz de transição e o ARI.
-  4. (Bônus) Mostra os arquétipos dos elencos campeões: OKC (2024-25) e
-     New York Knicks (2025-26).
+     o arquétipo, quanto coincidiria por acaso (dados os tamanhos dos grupos)
+     e reporta a matriz de transição e o ARI.
 
-Não altera o pipeline principal nem a temporada 2024-25 (oficial da monografia).
+Uso:
+    python persistence_analysis.py
 """
 
 import numpy as np
@@ -28,7 +26,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score
 
-from config import ALL_FEATURES, KMEANS_CONFIG
+from config import CLUSTERING_FEATURES, KMEANS_CONFIG, SEASON, REPLICATION_SEASON
+from src.data_collection import load_data
 
 K = 3
 # Identidades canônicas de arquétipo
@@ -38,8 +37,8 @@ ARCHETYPE_NAMES = {
     ROTACAO: "Rotação",
     ESTRELAS: "Estrelas/Criadores",
 }
-I_PTS = ALL_FEATURES.index("PTS")
-I_REB = ALL_FEATURES.index("REB")
+I_PTS = CLUSTERING_FEATURES.index("PTS")
+I_REB = CLUSTERING_FEATURES.index("REB")
 
 
 def cluster_season_canonical(df: pd.DataFrame):
@@ -48,7 +47,7 @@ def cluster_season_canonical(df: pd.DataFrame):
     identidades canônicas de arquétipo pelo perfil (PTS/REB na escala original).
     Retorna (labels_canonicos, perfis_canonicos[K x n_features]).
     """
-    X = df[ALL_FEATURES].to_numpy()
+    X = df[CLUSTERING_FEATURES].to_numpy()
     Xs = StandardScaler().fit_transform(X)
     km = KMeans(
         n_clusters=K,
@@ -71,72 +70,58 @@ def cluster_season_canonical(df: pd.DataFrame):
     return labels, prof
 
 
-def main():
-    a = pd.read_csv("data/nba_players_2024_25.csv")
-    b = pd.read_csv("data/nba_players_2025_26.csv")
-
-    print("=" * 70)
-    print("PERSISTÊNCIA DE ARQUÉTIPOS: 2024-25  ->  2025-26")
-    print("=" * 70)
-    print(f"2024-25: {len(a)} jogadores | 2025-26: {len(b)} jogadores")
-
+def run_persistence(a: pd.DataFrame, b: pd.DataFrame) -> dict:
+    """Persistência dos arquétipos entre duas temporadas (a -> b)."""
     labels_a, prof_a = cluster_season_canonical(a)
     labels_b, prof_b = cluster_season_canonical(b)
-    a = a.copy(); a["arch"] = labels_a
-    b = b.copy(); b["arch"] = labels_b
+    a = a.assign(arch=labels_a)
+    b = b.assign(arch=labels_b)
 
-    # Perfis lado a lado (confirma que os 3 arquétipos reaparecem)
-    print("\n--- Perfis dos arquétipos (médias na escala original) ---")
-    for c in range(K):
-        na = int((labels_a == c).sum()); nb = int((labels_b == c).sum())
-        print(f"\nArquétipo {c} ({ARCHETYPE_NAMES[c]}):  2024-25 n={na} | 2025-26 n={nb}")
-        print("  feat      2024-25   2025-26")
-        for j, f in enumerate(ALL_FEATURES):
-            print(f"  {f:7s} {prof_a[c, j]:8.2f}  {prof_b[c, j]:8.2f}")
-
-    # Persistência nos jogadores presentes nas duas temporadas
     common = pd.merge(
         a[["PLAYER_ID", "PLAYER_NAME", "arch"]],
         b[["PLAYER_ID", "arch"]],
-        on="PLAYER_ID", suffixes=("_2425", "_2526"),
+        on="PLAYER_ID", suffixes=("_a", "_b"),
     )
     n_common = len(common)
-    same = int((common["arch_2425"] == common["arch_2526"]).sum())
-    pct = same / n_common * 100
-    ari = adjusted_rand_score(common["arch_2425"], common["arch_2526"])
+    same = int((common["arch_a"] == common["arch_b"]).sum())
 
-    print("\n" + "=" * 70)
-    print("PERSISTÊNCIA (jogadores presentes nas duas temporadas)")
-    print("=" * 70)
-    print(f"Jogadores em ambas: {n_common}")
-    print(f"Mantiveram o arquétipo: {same}/{n_common} = {pct:.1f}%")
-    print(f"ARI entre as duas atribuições (jogadores comuns): {ari:.3f}")
-    print("(Referência: Edwards-Thro 2021 reportou 62,95% de consistência.)")
+    # Concordância esperada por acaso: soma dos produtos das proporções de
+    # cada arquétipo nas duas temporadas (entre os jogadores em comum)
+    share_a = common["arch_a"].value_counts(normalize=True)
+    share_b = common["arch_b"].value_counts(normalize=True)
+    chance = float(sum(share_a.get(c, 0) * share_b.get(c, 0) for c in range(K)))
 
-    print("\n--- Matriz de transição (linha = 2024-25, coluna = 2025-26) ---")
-    ct = pd.crosstab(
-        common["arch_2425"].map(ARCHETYPE_NAMES),
-        common["arch_2526"].map(ARCHETYPE_NAMES),
+    transitions = pd.crosstab(
+        common["arch_a"].map(ARCHETYPE_NAMES),
+        common["arch_b"].map(ARCHETYPE_NAMES),
     )
-    print(ct.to_string())
+    return {
+        "n_a": len(a),
+        "n_b": len(b),
+        "n_comum": n_common,
+        "mantiveram": same,
+        "pct_mantiveram": same / n_common,
+        "pct_por_acaso": chance,
+        "ari": float(adjusted_rand_score(common["arch_a"], common["arch_b"])),
+        "tamanhos_a": {ARCHETYPE_NAMES[c]: int((labels_a == c).sum()) for c in range(K)},
+        "tamanhos_b": {ARCHETYPE_NAMES[c]: int((labels_b == c).sum()) for c in range(K)},
+        "perfis_a": {ARCHETYPE_NAMES[c]: dict(zip(CLUSTERING_FEATURES, prof_a[c].round(4).tolist())) for c in range(K)},
+        "perfis_b": {ARCHETYPE_NAMES[c]: dict(zip(CLUSTERING_FEATURES, prof_b[c].round(4).tolist())) for c in range(K)},
+        "transicoes": {de: {para: int(v) for para, v in row.items()} for de, row in transitions.iterrows()},
+    }
 
-    changed = common[common["arch_2425"] != common["arch_2526"]].copy()
-    changed["de"] = changed["arch_2425"].map(ARCHETYPE_NAMES)
-    changed["para"] = changed["arch_2526"].map(ARCHETYPE_NAMES)
-    print(f"\nMudaram de arquétipo: {len(changed)} jogadores")
-    print(changed[["PLAYER_NAME", "de", "para"]].head(15).to_string(index=False))
 
-    # BÔNUS: arquétipos dos campeões
-    print("\n" + "=" * 70)
-    print("BÔNUS: ARQUÉTIPOS DOS CAMPEÕES")
+def main():
+    r = run_persistence(load_data(SEASON), load_data(REPLICATION_SEASON))
     print("=" * 70)
-    for season_df, team, season in [(a, "OKC", "2024-25"), (b, "NYK", "2025-26")]:
-        roster = season_df[season_df["TEAM_ABBREVIATION"] == team].sort_values(
-            "PTS", ascending=False)
-        print(f"\n{team} (campeão {season}) — {len(roster)} jogadores no recorte (>=500 min):")
-        for _, row in roster.iterrows():
-            print(f"  {row['PLAYER_NAME']:26s} {ARCHETYPE_NAMES[int(row['arch'])]:20s} "
-                  f"PTS={row['PTS']:5.1f} REB={row['REB']:4.1f} AST={row['AST']:4.1f}")
+    print(f"PERSISTÊNCIA DE ARQUÉTIPOS: {SEASON} -> {REPLICATION_SEASON}")
+    print("=" * 70)
+    print(f"Jogadores nas duas temporadas: {r['n_comum']}")
+    print(f"Mantiveram o arquétipo: {r['mantiveram']}/{r['n_comum']} = {r['pct_mantiveram']:.1%}")
+    print(f"Esperado por acaso: {r['pct_por_acaso']:.1%}")
+    print(f"ARI entre as duas atribuições: {r['ari']:.3f}")
+    print("\nMatriz de transição (linha = primeira temporada, coluna = segunda):")
+    print(pd.DataFrame(r["transicoes"]).T.to_string())
 
 
 if __name__ == "__main__":

@@ -13,24 +13,45 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent
 DATA_DIR = PROJECT_ROOT / "data"
 RESULTS_DIR = PROJECT_ROOT / "results"
-FIGURES_DIR = PROJECT_ROOT / "figures"
-
-for _dir in [DATA_DIR, RESULTS_DIR, FIGURES_DIR]:
-    _dir.mkdir(exist_ok=True)
 
 # =============================================================================
-# COLETA DE DADOS
+# DADOS
+# Temporada principal e temporada de replicação (temporada regular).
+# Filtro de inclusão: pelo menos 500 minutos jogados na temporada, somados
+# pelo endpoint de totais. "15mpg" (média de pelo menos 15 minutos por jogo)
+# é a variante usada na análise de sensibilidade ao recorte.
 # =============================================================================
 SEASON = "2024-25"
+REPLICATION_SEASON = "2025-26"
+
 MIN_MINUTES = 500
+MIN_MINUTES_PER_GAME = 15
+FILTERS = ("500min", "15mpg")
+DEFAULT_FILTER = "500min"
+
+
+def _suffix(filtro: str) -> str:
+    if filtro not in FILTERS:
+        raise ValueError(f"Filtro desconhecido: {filtro}. Opções: {FILTERS}")
+    return "" if filtro == DEFAULT_FILTER else f"_{filtro}"
+
+
+def data_path(season: str, filtro: str = DEFAULT_FILTER) -> Path:
+    """CSV de uma temporada, ex.: data/nba_players_2024_25.csv."""
+    return DATA_DIR / f"nba_players_{season.replace('-', '_')}{_suffix(filtro)}.csv"
+
+
+def results_path(season: str, filtro: str = DEFAULT_FILTER) -> Path:
+    """Pasta de resultados de uma rodada, ex.: results/2024-25/."""
+    return RESULTS_DIR / f"{season}{_suffix(filtro)}"
+
 
 # =============================================================================
 # FEATURES DE CLUSTERING
 # 11 variáveis de box-score conforme definido no pré-projeto.
 # Cobrem pontuação, rebote, assistência, defesa e eficiência.
 # =============================================================================
-# Aliases mantidos para compatibilidade com o notebook
-ALL_FEATURES = CLUSTERING_FEATURES = [
+CLUSTERING_FEATURES = [
     "PTS",      # Pontos por jogo
     "REB",      # Rebotes totais por jogo
     "OREB",     # Rebotes ofensivos por jogo
@@ -43,7 +64,6 @@ ALL_FEATURES = CLUSTERING_FEATURES = [
     "FT_PCT",   # Percentual de lances livres
     "TOV",      # Turnovers por jogo
 ]
-BASIC_FEATURES = CLUSTERING_FEATURES
 
 # =============================================================================
 # PARÂMETROS DOS ALGORITMOS
@@ -77,14 +97,9 @@ VALIDATION_CONFIG = {
     "n_seeds": 30,
 }
 
-# =============================================================================
-# MAPEAMENTO DE POSIÇÕES (análise secundária)
-# =============================================================================
-POSITION_GROUPS = {
-    "Guard": ["PG", "SG", "G", "G-F"],
-    "Forward": ["SF", "PF", "F", "F-G", "F-C"],
-    "Center": ["C", "C-F"],
-}
+# Limiar de probabilidade no componente secundário do GMM para considerar
+# um jogador híbrido.
+HYBRID_THRESHOLD = 0.25
 
 # =============================================================================
 # VISUALIZAÇÃO

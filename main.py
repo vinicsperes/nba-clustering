@@ -6,32 +6,39 @@ Pergunta de Pesquisa:
 "Qual algoritmo de clustering é mais adequado para identificar agrupamentos
 de jogadores da NBA com base em estatísticas de desempenho?"
 
-Hipótese:
-H₀: Os três algoritmos produzem agrupamentos com qualidade equivalente.
-H₁: Existe diferença significativa na qualidade dos agrupamentos entre os algoritmos.
+H0: Os três algoritmos produzem agrupamentos com qualidade equivalente.
+H1: Existe diferença significativa na qualidade dos agrupamentos.
 
-Pipeline:
-1. Coleta de dados (NBA API) + auto-patch posições
-2. Pré-processamento (seleção de features + normalização)
-3. Clustering (K-Means + GMM + Hierárquico)
-4. Validação (métricas internas + externas por algoritmo)
-5. Comparação de algoritmos (tabela comparativa + estabilidade)
-6. Clusters vs Posições (análise secundária)
-7. Perfis e arquétipos
-8. Jogadores híbridos (GMM)
-9. Visualizações
-10. Salvar resultados
+Cada rodada (temporada + filtro) grava em results/<rodada>/:
+  numeros.json      todos os números citados na monografia
+  relatorio.md      os mesmos números em tabelas, para leitura
+  atribuicoes.csv   cluster de cada jogador em cada algoritmo
+  bootstrap_pareado.csv
+  figuras/          as oito figuras da monografia
+
+Uso:
+    python main.py                                   # todas as rodadas
+    python main.py --season 2024-25                  # só uma rodada
+    python main.py --season 2024-25 --filtro 15mpg   # variante do recorte
 """
 
+import argparse
+import json
 import warnings
-from pathlib import Path
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
 
-from config import DATA_DIR, RESULTS_DIR, FIGURES_DIR, SEASON
-from src.data_collection import collect_all_data, load_data, patch_positions
+from config import (
+    SEASON,
+    REPLICATION_SEASON,
+    DEFAULT_FILTER,
+    HYBRID_THRESHOLD,
+    RESULTS_DIR,
+    results_path,
+)
+from src.data_collection import load_data
 from src.preprocessing import prepare_data, get_position_labels
 from src.clustering import (
     run_clustering,
@@ -39,393 +46,191 @@ from src.clustering import (
     get_cluster_examples,
     analyze_hybrid_players,
 )
-from src.validation import (
-    validate_clustering,
-    generate_validation_report,
-    compare_algorithms,
-    crosstab_clusters_positions,
-)
-from src.visualization import create_all_visualizations
+from src.validation import compare_algorithms, crosstab_clusters_positions
+from src.visualization import create_figures
+from src.report import write_report
+from friedman_analysis import run_friedman
+from sensitivity_features import run_sensitivity
+from persistence_analysis import run_persistence
 
 warnings.filterwarnings("ignore")
 
+ALGOS = ["kmeans", "gmm", "hierarchical"]
 
-def main(
-    collect_new_data: bool = False,
-    apply_pca: bool = False,
-    save_results: bool = True,
-):
-    """
-    Pipeline principal de análise.
+# Rodadas geradas por `python main.py`
+RUNS = [
+    (SEASON, DEFAULT_FILTER),             # análise principal
+    (SEASON, "15mpg"),                    # sensibilidade ao recorte
+    (REPLICATION_SEASON, DEFAULT_FILTER), # replicação
+]
 
-    Parameters
-    ----------
-    collect_new_data : bool
-        Se True, coleta dados frescos da NBA API.
-        Se False, usa dados já salvos.
-    apply_pca : bool
-        Se True, aplica PCA antes do clustering.
-    save_results : bool
-        Se True, salva resultados em CSV.
 
-    Returns
-    -------
-    dict
-        Resultados completos da análise
-    """
+def _json_default(o):
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    raise TypeError(f"Tipo não serializável: {type(o)}")
+
+
+def _table(df: pd.DataFrame) -> dict:
+    """Tabela como {linha: {coluna: valor}}, com chaves em texto (JSON)."""
+    return {str(i): {str(c): v for c, v in row.items()} for i, row in df.to_dict("index").items()}
+
+
+def _save_json(data: dict, path):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, default=_json_default)
+
+
+def run(season: str, filtro: str = DEFAULT_FILTER) -> dict:
+    """Executa o pipeline completo de uma rodada e grava os resultados."""
+    out_dir = results_path(season, filtro)
+    out_dir.mkdir(parents=True, exist_ok=True)
     print("=" * 70)
-    print("TCC: ANÁLISE COMPARATIVA DE K-MEANS, GMM E CLUSTERING HIERÁRQUICO")
-    print("Identificação de Arquétipos de Jogadores NBA")
-    print("=" * 70)
-    print(f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Temporada: {SEASON}")
-    print(f"\nH₀: Algoritmos produzem agrupamentos com qualidade equivalente")
-    print(f"H₁: Existe diferença significativa na qualidade dos agrupamentos")
-
-    # =========================================================================
-    # ETAPA 1: COLETA DE DADOS
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 1: COLETA DE DADOS")
+    print(f"RODADA: {season} ({filtro}) -> {out_dir}")
     print("=" * 70)
 
-    if collect_new_data:
-        df = collect_all_data(season=SEASON)
-    else:
-        try:
-            df = load_data(season=SEASON)
-        except FileNotFoundError:
-            print("Dados não encontrados. Coletando...")
-            df = collect_all_data(season=SEASON)
-
-    # Auto-patch posições se necessário
-    needs_patch = "POSITION" not in df.columns
-    if not needs_patch and "POSITION" in df.columns:
-        n_unknown = (df["POSITION"] == "Unknown").sum()
-        if n_unknown > len(df) * 0.5:
-            print(f"\n{n_unknown}/{len(df)} posições são 'Unknown'. Re-buscando...")
-            needs_patch = True
-
-    if needs_patch:
-        print("\nBuscando posições dos jogadores...")
-        try:
-            df = patch_positions(season=SEASON)
-        except Exception as e:
-            print(f"  Não foi possível buscar posições: {e}")
-
-    print(f"\nDataset: {len(df)} jogadores, {len(df.columns)} colunas")
-
-    # =========================================================================
-    # ETAPA 2: PRÉ-PROCESSAMENTO
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 2: PRÉ-PROCESSAMENTO")
-    print("=" * 70)
-
-    X, df_meta, preprocessor = prepare_data(df, apply_pca=apply_pca)
-
-    # Extrair posições para validação
+    df = load_data(season, filtro)
+    X, preprocessor = prepare_data(df)
+    features = preprocessor.features_used
     positions = get_position_labels(df)
+    names = df["PLAYER_NAME"].tolist()
 
-    # Mostrar distribuição de posições
-    print("\nDistribuição de Posições Tradicionais:")
-    unique, counts = np.unique(positions, return_counts=True)
-    for pos, count in zip(unique, counts):
-        pct = count / len(positions) * 100
-        print(f"  {pos}: {count} ({pct:.1f}%)")
+    # Clustering: cada algoritmo escolhe o k pelo seu critério próprio
+    clustering = run_clustering(X)
+    results = {algo: clustering[algo] for algo in ALGOS}
+    ks = {algo: results[algo].k for algo in ALGOS}
 
-    # =========================================================================
-    # ETAPA 3: CLUSTERING (K-Means + GMM + Hierárquico)
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 3: CLUSTERING")
-    print("=" * 70)
+    # Métricas internas, estabilidade e concordância com as posições
+    print("\nComparação dos algoritmos...")
+    comparison = compare_algorithms(X, results, positions)
 
-    clustering_results = run_clustering(X)
+    # Teste formal (bootstrap pareado + Friedman + Wilcoxon)
+    print("\nTeste de Friedman...")
+    ari_df, fried, wilc = run_friedman(X, ks)
 
-    kmeans_result = clustering_results["kmeans"]
-    gmm_result = clustering_results["gmm"]
-    hier_result = clustering_results["hierarchical"]
+    # Sensibilidade às features de rebote
+    print("\nSensibilidade às features...")
+    sensitivity = run_sensitivity(df)
 
-    print(f"\nResultados:")
-    print(f"  K-Means:      k={kmeans_result.k}, Silhouette={kmeans_result.silhouette:.3f}")
-    print(f"  GMM:           k={gmm_result.k}, Silhouette={gmm_result.silhouette:.3f}")
-    print(f"  Hierárquico:   k={hier_result.k}, Silhouette={hier_result.silhouette:.3f}")
+    gmm = results["gmm"]
+    hybrids = analyze_hybrid_players(gmm.probabilities, names, threshold=HYBRID_THRESHOLD)
+    create_figures(X, clustering, features, out_dir / "figuras")
 
-    # =========================================================================
-    # ETAPA 4: VALIDAÇÃO CIENTÍFICA (por algoritmo)
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 4: VALIDAÇÃO CIENTÍFICA")
-    print("=" * 70)
+    bic = clustering["gmm_model"].get_bic_data()
+    describe = df[features].describe()
 
-    validations = {}
-    for algo_name, result in [("K-Means", kmeans_result), ("GMM", gmm_result), ("Hierarchical", hier_result)]:
-        validations[algo_name] = validate_clustering(
-            X, result.labels, positions, algorithm_name=algo_name
-        )
-
-    # =========================================================================
-    # ETAPA 5: COMPARAÇÃO DE ALGORITMOS
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 5: COMPARAÇÃO DE ALGORITMOS")
-    print("=" * 70)
-
-    comparison_df = compare_algorithms(
-        X,
-        {"kmeans": kmeans_result, "gmm": gmm_result, "hierarchical": hier_result},
-        positions,
-    )
-
-    # =========================================================================
-    # ETAPA 6: CLUSTERS VS POSIÇÕES REAIS
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 6: CLUSTERS VS POSIÇÕES REAIS")
-    print("=" * 70)
-
-    crosstabs = {}
-    for algo_name, result in [("K-Means", kmeans_result), ("GMM", gmm_result), ("Hierarchical", hier_result)]:
-        crosstabs[algo_name] = crosstab_clusters_positions(
-            result.labels, positions, algorithm_name=algo_name
-        )
-
-    # =========================================================================
-    # ETAPA 7: PERFIS E ARQUÉTIPOS
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 7: PERFIS DOS CLUSTERS")
-    print("=" * 70)
-
-    player_names = df["PLAYER_NAME"].tolist()
-    all_profiles = {}
-    all_examples = {}
-
-    for algo_key, result in [("kmeans", kmeans_result), ("gmm", gmm_result), ("hierarchical", hier_result)]:
-        print(f"\n--- {result.algorithm} (k={result.k}) ---")
-
-        profiles = get_cluster_profiles(
-            X, result.labels, preprocessor.features_used, df
-        )
-        all_profiles[algo_key] = profiles
-        print(profiles.to_string(index=False))
-
-        examples = get_cluster_examples(result.labels, player_names, n_examples=5)
-        all_examples[algo_key] = examples
-
-        print(f"\nExemplos de Jogadores:")
-        for cluster, players in examples.items():
-            print(f"  Cluster {cluster}: {', '.join(players)}")
-
-    # =========================================================================
-    # ETAPA 8: JOGADORES HÍBRIDOS (GMM)
-    # =========================================================================
-    hybrids = pd.DataFrame()
-    if gmm_result.probabilities is not None:
-        print("\n" + "=" * 70)
-        print("ETAPA 8: JOGADORES HÍBRIDOS (GMM - Soft Clustering)")
-        print("=" * 70)
-
-        hybrids = analyze_hybrid_players(
-            gmm_result.probabilities,
-            player_names,
-            threshold=0.25
-        )
-
-        if not hybrids.empty:
-            print(f"\n{len(hybrids)} jogadores híbridos identificados:")
-            print(hybrids.head(15).to_string(index=False))
-        else:
-            print("Nenhum jogador híbrido significativo encontrado.")
-
-    # =========================================================================
-    # ETAPA 9: VISUALIZAÇÕES
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("ETAPA 9: VISUALIZAÇÕES")
-    print("=" * 70)
-
-    # Preparar dados para visualizações
-    clustering_labels = {
-        "K-Means": kmeans_result.labels,
-        "GMM": gmm_result.labels,
-        "Hierarchical": hier_result.labels,
+    numeros = {
+        "rodada": {"temporada": season, "filtro": filtro},
+        "amostra": {
+            "n_jogadores": len(df),
+            "n_colunas": df.shape[1],
+            "posicoes": (pd.Series(positions).value_counts().to_dict()
+                         if positions is not None else None),
+            "fg3_pct_zero": int((df["FG3_PCT"] == 0).sum()),
+            "sem_tentativa_de_3": int((df["FG3A"] == 0).sum()) if "FG3A" in df else None,
+        },
+        "descritivas": {
+            f: {
+                "media": describe.loc["mean", f],
+                "desvio": describe.loc["std", f],
+                "minimo": describe.loc["min", f],
+                "mediana": describe.loc["50%", f],
+                "maximo": describe.loc["max", f],
+            }
+            for f in features
+        },
+        "correlacoes": pd.DataFrame(X, columns=features).corr().to_dict(),
+        "pca_variancia": PCA(n_components=2, random_state=42).fit(X).explained_variance_ratio_,
+        "selecao_k": {
+            "kmeans": clustering["kmeans_model"].get_elbow_data().to_dict("records"),
+            "gmm": bic.to_dict("records"),
+            "hierarchical": clustering["hier_model"].get_silhouette_data().to_dict("records"),
+            "gmm_k_por_silhouette": int(bic.loc[bic["silhouette"].idxmax(), "k"]),
+        },
+        "tamanhos": {algo: np.bincount(results[algo].labels).tolist() for algo in ALGOS},
+        "comparacao": {
+            algo: {
+                "k": row["k"],
+                "silhouette": row["Silhouette Score"],
+                "davies_bouldin": row["Davies-Bouldin Index"],
+                "calinski_harabasz": row["Calinski-Harabasz Index"],
+                "ari_bootstrap": row["Bootstrap Mean ARI"],
+                "ari_sementes": row["Random Seed Mean ARI"],
+                "silhouette_por_cluster": row["Silhouette per Cluster"],
+                "ari_posicoes": row.get("ARI vs Positions"),
+                "nmi_posicoes": row.get("NMI vs Positions"),
+            }
+            for algo, (_, row) in zip(ALGOS, comparison.iterrows())
+        },
+        "friedman": {
+            "chi2": fried["statistic"],
+            "p": fried["p_value"],
+            "ari_pareado": fried["means"],
+            "rejeita_h0": fried["reject_h0"],
+            "wilcoxon": wilc.to_dict("records"),
+        },
+        "sensibilidade_features": sensitivity,
+        "perfis": {
+            algo: get_cluster_profiles(X, results[algo].labels, features, df).to_dict("records")
+            for algo in ALGOS
+        },
+        "exemplos": {
+            algo: get_cluster_examples(X, results[algo].labels, names, n_examples=5)
+            for algo in ALGOS
+        },
+        "posicoes_por_cluster": (
+            {algo: _table(crosstab_clusters_positions(results[algo].labels, positions))
+             for algo in ALGOS}
+            if positions is not None else None
+        ),
+        "hibridos": hybrids.to_dict("records"),
     }
 
-    # Dados do K-Means para elbow curve
-    kmeans_model = clustering_results["kmeans_model"]
-    elbow_data = kmeans_model.get_elbow_data()
+    _save_json(numeros, out_dir / "numeros.json")
+    write_report(numeros, out_dir / "relatorio.md")
+    ari_df.to_csv(out_dir / "bootstrap_pareado.csv", index=False)
 
-    # Dados do GMM para a curva do BIC
-    gmm_model = clustering_results["gmm_model"]
-    bic_data = gmm_model.get_bic_data()
-
-    analysis_results = {
-        "kmeans": {
-            "k_values": elbow_data["k"].tolist(),
-            "inertias": elbow_data["inertia"].tolist(),
-            "silhouettes": elbow_data["silhouette"].tolist(),
-            "optimal_k": kmeans_result.k,
-        },
-        "gmm": {
-            "k_values": bic_data["k"].tolist(),
-            "bics": bic_data["bic"].tolist(),
-            "silhouettes": bic_data["silhouette"].tolist(),
-            "optimal_k": gmm_result.k,
-        },
-        "hierarchical": {
-            "linkage_matrix": hier_result.linkage_matrix,
-            "optimal_k": hier_result.k,
-        },
-        "comparison": comparison_df,
-    }
-
-    # Adicionar stability_df para visualização
-    stability_cols = ["Algorithm", "Random Seed Mean ARI", "Bootstrap Mean ARI", "Mean Point Stability"]
-    available_stab = [c for c in stability_cols if c in comparison_df.columns]
-    if len(available_stab) == len(stability_cols):
-        analysis_results["stability"] = comparison_df[stability_cols]
-
-    try:
-        create_all_visualizations(
-            X,
-            clustering_labels,
-            analysis_results,
-            preprocessor.features_used,
-            player_names=player_names,
-            output_dir=FIGURES_DIR,
-        )
-    except Exception as e:
-        print(f"  AVISO: Erro ao criar visualizações: {e}")
-
-    # =========================================================================
-    # ETAPA 10: SALVAR RESULTADOS
-    # =========================================================================
-    if save_results:
-        print("\n" + "=" * 70)
-        print("ETAPA 10: SALVAR RESULTADOS")
-        print("=" * 70)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Salvar atribuições de jogadores
-        assignments = df[["PLAYER_NAME", "TEAM_ABBREVIATION"]].copy()
+    assignments = df[["PLAYER_ID", "PLAYER_NAME", "TEAM_ABBREVIATION"]].copy()
+    if positions is not None:
         assignments["POSITION"] = positions
-        assignments["KMEANS_CLUSTER"] = kmeans_result.labels
-        assignments["GMM_CLUSTER"] = gmm_result.labels
-        assignments["HIER_CLUSTER"] = hier_result.labels
+    for algo in ALGOS:
+        assignments[f"{algo.upper()}_CLUSTER"] = results[algo].labels
+    for i in range(gmm.probabilities.shape[1]):
+        assignments[f"GMM_PROB_{i}"] = gmm.probabilities[:, i]
+    assignments.to_csv(out_dir / "atribuicoes.csv", index=False)
 
-        # Adicionar probabilidades do GMM
-        if gmm_result.probabilities is not None:
-            for i in range(gmm_result.probabilities.shape[1]):
-                assignments[f"GMM_PROB_{i}"] = gmm_result.probabilities[:, i]
+    print(f"\nk: {ks}")
+    for algo, c in numeros["comparacao"].items():
+        print(f"  {algo:13s} Sil={c['silhouette']:.3f}  DB={c['davies_bouldin']:.3f}  "
+              f"CH={c['calinski_harabasz']:.2f}  ARI bootstrap={c['ari_bootstrap']:.3f}")
+    print(f"  Friedman chi2={fried['statistic']:.2f}  p={fried['p_value']:.3e}")
+    print(f"Resultados em {out_dir}/\n")
+    return numeros
 
-        assign_path = RESULTS_DIR / f"player_assignments_{timestamp}.csv"
-        assignments.to_csv(assign_path, index=False)
-        print(f"  Atribuições salvas: {assign_path}")
 
-        # Salvar perfis dos clusters (K-Means como principal)
-        profiles_path = RESULTS_DIR / f"cluster_profiles_{timestamp}.csv"
-        all_profiles["kmeans"].to_csv(profiles_path, index=False)
-        print(f"  Perfis salvos: {profiles_path}")
+def main():
+    parser = argparse.ArgumentParser(description="Pipeline completo do TCC.")
+    parser.add_argument("--season", help="Roda só esta temporada (padrão: todas as rodadas).")
+    parser.add_argument("--filtro", default=DEFAULT_FILTER)
+    args = parser.parse_args()
 
-        # Salvar comparação de algoritmos
-        comparison_path = RESULTS_DIR / f"algorithm_comparison_{timestamp}.csv"
-        comparison_df.to_csv(comparison_path, index=False)
-        print(f"  Comparação salva: {comparison_path}")
+    if args.season:
+        run(args.season, args.filtro)
+        return
 
-        # Salvar relatório de validação (K-Means principal)
-        report = generate_validation_report(
-            validations["K-Means"], all_profiles["kmeans"],
-            algorithm_name="K-Means"
-        )
-        report_path = RESULTS_DIR / f"validation_report_{timestamp}.txt"
-        report_path.write_text(report)
-        print(f"  Relatório salvo: {report_path}")
+    for season, filtro in RUNS:
+        run(season, filtro)
 
-        # Salvar jogadores híbridos
-        if not hybrids.empty:
-            hybrids_path = RESULTS_DIR / f"hybrid_players_{timestamp}.csv"
-            hybrids.to_csv(hybrids_path, index=False)
-            print(f"  Híbridos salvos: {hybrids_path}")
-
-    # =========================================================================
-    # CONCLUSÃO
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("CONCLUSÃO - TESTE DE HIPÓTESE")
-    print("=" * 70)
-
-    # Ranking por cada métrica
-    print("\n--- Ranking por Métrica ---")
-    best_sil = comparison_df.loc[comparison_df["Silhouette Score"].idxmax()]
-    best_db = comparison_df.loc[comparison_df["Davies-Bouldin Index"].idxmin()]
-    best_ch = comparison_df.loc[comparison_df["Calinski-Harabasz Index"].idxmax()]
-
-    print(f"  Silhouette Score (maior=melhor):   {best_sil['Algorithm']} ({best_sil['Silhouette Score']:.4f})")
-    print(f"  Davies-Bouldin (menor=melhor):     {best_db['Algorithm']} ({best_db['Davies-Bouldin Index']:.4f})")
-    print(f"  Calinski-Harabasz (maior=melhor):  {best_ch['Algorithm']} ({best_ch['Calinski-Harabasz Index']:.2f})")
-
-    if "Bootstrap Mean ARI" in comparison_df.columns:
-        best_boot = comparison_df.loc[comparison_df["Bootstrap Mean ARI"].idxmax()]
-        print(f"  Estabilidade Bootstrap (maior=melhor): {best_boot['Algorithm']} ({best_boot['Bootstrap Mean ARI']:.4f})")
-
-    # Verificar se o mesmo algoritmo vence em todas as métricas
-    winners = {best_sil['Algorithm'], best_db['Algorithm'], best_ch['Algorithm']}
-
-    print(f"\n--- Teste de Hipótese ---")
-    print(f"H₀: Os três algoritmos produzem agrupamentos com qualidade equivalente.")
-    print(f"H₁: Existe diferença significativa na qualidade dos agrupamentos.\n")
-
-    # Calcular spread das métricas para avaliar se diferença é significativa
-    sil_range = comparison_df["Silhouette Score"].max() - comparison_df["Silhouette Score"].min()
-    sil_mean = comparison_df["Silhouette Score"].mean()
-
-    if len(winners) == 1:
-        winner = winners.pop()
-        print(f"RESULTADO: H₀ REJEITADA")
-        print(f"  {winner} supera os demais algoritmos em todas as métricas internas.")
-        print(f"  Diferença no Silhouette Score: {sil_range:.4f} "
-              f"({sil_range/sil_mean*100:.1f}% do valor médio)")
-    else:
-        if sil_range > 0.05:
-            print(f"RESULTADO: H₀ REJEITADA")
-            print(f"  Há diferença significativa entre os algoritmos.")
-            print(f"  Spread no Silhouette Score: {sil_range:.4f}")
-        else:
-            print(f"RESULTADO: H₀ NÃO REJEITADA")
-            print(f"  As diferenças entre os algoritmos são pequenas.")
-            print(f"  Spread no Silhouette Score: {sil_range:.4f}")
-
-    # Melhor algoritmo geral
-    print(f"\nMELHOR ALGORITMO: {best_sil['Algorithm']} "
-          f"(k={int(best_sil['k'])}, Silhouette={best_sil['Silhouette Score']:.4f})")
-
-    # Resumo descritivo
-    print(f"\n--- Resumo Descritivo (melhor algoritmo) ---")
-    print(validations[best_sil['Algorithm']].evidence_summary)
-
-    return {
-        "df": df,
-        "X": X,
-        "preprocessor": preprocessor,
-        "positions": positions,
-        "kmeans": kmeans_result,
-        "gmm": gmm_result,
-        "hierarchical": hier_result,
-        "validations": validations,
-        "comparison": comparison_df,
-        "profiles": all_profiles,
-        "examples": all_examples,
-        "hybrids": hybrids,
-    }
+    persistence = run_persistence(load_data(SEASON), load_data(REPLICATION_SEASON))
+    _save_json(persistence, RESULTS_DIR / "persistencia.json")
+    print(f"Persistência: {persistence['pct_mantiveram']:.1%} mantiveram o arquétipo "
+          f"(por acaso: {persistence['pct_por_acaso']:.1%}; ARI {persistence['ari']:.3f})")
+    print(f"Resultados em {RESULTS_DIR / 'persistencia.json'}")
 
 
 if __name__ == "__main__":
-    results = main(
-        collect_new_data=False,
-        apply_pca=False,
-        save_results=True,
-    )
+    main()

@@ -9,15 +9,9 @@ venv/
 env/
 .venv/
 
-# Jupyter
-.ipynb_checkpoints/
-notebooks/analysis.pdf
-notebooks/analysis.html
-
 # IDE / tools
 .vscode/
 .idea/
-.claude/
 *.swp
 
 # OS
@@ -26,4 +20,3 @@ Thumbs.db
 
 # Generated outputs (regenerable via main.py)
 results/
-figures/
