@@ -16,7 +16,3 @@ scipy==1.17.1
 # Visualization
 matplotlib==3.10.9
 seaborn==0.13.2
-
-# Jupyter Support (opcional — apenas para re-executar notebooks/analysis.ipynb)
-# jupyter
-# ipykernel
