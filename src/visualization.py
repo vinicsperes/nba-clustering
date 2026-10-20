@@ -238,7 +238,10 @@ def plot_dendrogram(
 
     # Calculate color threshold if n_clusters specified
     if n_clusters:
-        color_threshold = linkage_matrix[-(n_clusters - 1), 2]
+        # Meio do intervalo entre a fusão que leva a n_clusters e a seguinte,
+        # para a linha de corte não coincidir com nenhuma fusão
+        color_threshold = (linkage_matrix[-(n_clusters - 1), 2]
+                           + linkage_matrix[-n_clusters, 2]) / 2
     else:
         color_threshold = None
 
@@ -409,7 +412,7 @@ def plot_silhouette_analysis(
     ax.set_ylabel('Cluster', fontsize=12)
     ax.set_title(title, fontsize=14)
     ax.legend(loc='best')
-    ax.set_xlim([-0.1, 1])
+    ax.set_xlim([min(-0.1, sample_silhouette_values.min() - 0.05), 1])
 
     plt.tight_layout()
 
