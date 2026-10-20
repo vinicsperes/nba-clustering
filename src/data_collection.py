@@ -139,10 +139,12 @@ def get_positions(players: pd.DataFrame) -> pd.Series:
                 ).get_data_frames()[0]
                 pos = _normalize_position(info["POSITION"].iloc[0]) if len(info) else "Unknown"
             except Exception as e:
+                # Falha da API não é gravada: o jogador é buscado de novo na próxima coleta
                 warnings.warn(f"CommonPlayerInfo falhou para {row['PLAYER_NAME']}: {e}")
-                pos = "Unknown"
-            new.append({"PLAYER_ID": row["PLAYER_ID"],
-                        "PLAYER_NAME": row["PLAYER_NAME"], "POSITION": pos})
+                pos = None
+            if pos is not None:
+                new.append({"PLAYER_ID": row["PLAYER_ID"],
+                            "PLAYER_NAME": row["PLAYER_NAME"], "POSITION": pos})
             time.sleep(0.6)
         known = pd.concat([known, pd.DataFrame(new)], ignore_index=True)
         known.sort_values("PLAYER_NAME").to_csv(POSITIONS_PATH, index=False)
