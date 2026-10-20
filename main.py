@@ -215,11 +215,11 @@ def run(season: str, filtro: str = DEFAULT_FILTER) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Pipeline completo do TCC.")
     parser.add_argument("--season", help="Roda só esta temporada (padrão: todas as rodadas).")
-    parser.add_argument("--filtro", default=DEFAULT_FILTER)
+    parser.add_argument("--filtro", help=f"Roda só este filtro (padrão: {DEFAULT_FILTER}).")
     args = parser.parse_args()
 
-    if args.season:
-        run(args.season, args.filtro)
+    if args.season or args.filtro:
+        run(args.season or SEASON, args.filtro or DEFAULT_FILTER)
         return
 
     for season, filtro in RUNS:
