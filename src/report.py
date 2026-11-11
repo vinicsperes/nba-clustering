@@ -49,9 +49,16 @@ def write_report(n: Dict, path: Path) -> None:
         total = sum(a["posicoes"].values())
         out.append("- Posições: " + ", ".join(
             f"{p} {c} ({num(100 * c / total, 1)}%)" for p, c in a["posicoes"].items()))
+    if a.get("posicoes_cadastro"):
+        out.append("- Posição no cadastro: " + ", ".join(
+            f"{p} {c}" for p, c in a["posicoes_cadastro"].items())
+            + f" ({a['posicao_dupla']} com posição dupla; a simplificada usa a primeira letra)")
     out.append(f"- FG3_PCT = 0: {a['fg3_pct_zero']} jogadores"
                + (f" ({a['sem_tentativa_de_3']} sem nenhuma tentativa de três)"
                   if a["sem_tentativa_de_3"] is not None else ""))
+    if a.get("fg3_pct_zero_por_cluster_kmeans"):
+        out.append("- FG3_PCT = 0 por cluster do K-Means: " + ", ".join(
+            f"cluster {c}: {k}" for c, k in a["fg3_pct_zero_por_cluster_kmeans"].items()))
 
     out += ["", "## Estatísticas descritivas", ""]
     out.append(table(
@@ -84,6 +91,12 @@ def write_report(n: Dict, path: Path) -> None:
     out.append(f"\nEscolhidos: K-Means k={n['comparacao']['kmeans']['k']}, "
                f"GMM k={n['comparacao']['gmm']['k']} (pelo Silhouette seria {sk['gmm_k_por_silhouette']}), "
                f"Hierárquico k={n['comparacao']['hierarchical']['k']}.")
+    if sk.get("abaixo_da_faixa"):
+        b = sk["abaixo_da_faixa"]
+        out.append(f"\nAbaixo da faixa de busca (não entra na escolha): com k=2, Silhouette do "
+                   f"K-Means {num(b['kmeans_k2_silhouette'])} (grupos de {b['kmeans_k2_tamanhos']}) "
+                   f"e do Hierárquico {num(b['hierarchical_k2_silhouette'])}; BIC do GMM com k=1 "
+                   f"{num(b['gmm_bic_k1'], 1)} e com k=2 {num(b['gmm_bic_k2'], 1)}.")
     out.append("\nTamanhos: " + "; ".join(
         f"{ALGO_NAMES[algo]} {list(t)}" for algo, t in n["tamanhos"].items()))
 

@@ -28,7 +28,10 @@ import warnings
 
 import numpy as np
 import pandas as pd
+from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
+from sklearn.mixture import GaussianMixture
 
 from config import (
     SEASON,
@@ -36,6 +39,9 @@ from config import (
     DEFAULT_FILTER,
     HYBRID_THRESHOLD,
     RESULTS_DIR,
+    KMEANS_CONFIG,
+    GMM_CONFIG,
+    HIERARCHICAL_CONFIG,
     results_path,
 )
 from src.data_collection import load_data
@@ -85,6 +91,30 @@ def _save_json(data: dict, path):
         json.dump(data, f, indent=2, ensure_ascii=False, default=_json_default)
 
 
+def _abaixo_da_faixa(X: np.ndarray) -> dict:
+    """
+    Valores de k abaixo da faixa de busca (3 a 12), com os mesmos parâmetros
+    dos modelos. Não entram na escolha de k: servem para documentar o que
+    acontece com k = 2 (Silhouette) e com k = 1 e 2 (BIC).
+    """
+    km = KMeans(n_clusters=2, n_init=KMEANS_CONFIG["n_init"], max_iter=KMEANS_CONFIG["max_iter"],
+                random_state=KMEANS_CONFIG["random_state"]).fit(X)
+    hier = AgglomerativeClustering(n_clusters=2, linkage=HIERARCHICAL_CONFIG["linkage"]).fit_predict(X)
+    bic = {
+        k: GaussianMixture(n_components=k, covariance_type=GMM_CONFIG["covariance_type"],
+                           n_init=GMM_CONFIG["n_init"], max_iter=GMM_CONFIG["max_iter"],
+                           random_state=GMM_CONFIG["random_state"]).fit(X).bic(X)
+        for k in (1, 2)
+    }
+    return {
+        "kmeans_k2_silhouette": silhouette_score(X, km.labels_),
+        "kmeans_k2_tamanhos": sorted(np.bincount(km.labels_).tolist(), reverse=True),
+        "hierarchical_k2_silhouette": silhouette_score(X, hier),
+        "gmm_bic_k1": bic[1],
+        "gmm_bic_k2": bic[2],
+    }
+
+
 def run(season: str, filtro: str = DEFAULT_FILTER) -> dict:
     """Executa o pipeline completo de uma rodada e grava os resultados."""
     out_dir = results_path(season, filtro)
@@ -131,7 +161,17 @@ def run(season: str, filtro: str = DEFAULT_FILTER) -> dict:
             "posicoes": (pd.Series(positions).value_counts().to_dict()
                          if positions is not None else None),
             "fg3_pct_zero": int((df["FG3_PCT"] == 0).sum()),
+            "fg3_pct_zero_por_cluster_kmeans": {
+                str(c): int(n) for c, n in
+                pd.Series(results["kmeans"].labels[(df["FG3_PCT"] == 0).values]).value_counts().sort_index().items()
+            },
             "sem_tentativa_de_3": int((df["FG3A"] == 0).sum()) if "FG3A" in df else None,
+            # Posição como vem do cadastro (G-F, F-C...). A simplificada usa a
+            # primeira letra: G-F vira Guard, F-C vira Forward, C-F vira Center.
+            "posicoes_cadastro": (df["POSITION"].value_counts().to_dict()
+                                  if "POSITION" in df else None),
+            "posicao_dupla": (int(df["POSITION"].astype(str).str.contains("-").sum())
+                              if "POSITION" in df else None),
         },
         "descritivas": {
             f: {
@@ -150,6 +190,7 @@ def run(season: str, filtro: str = DEFAULT_FILTER) -> dict:
             "gmm": bic.to_dict("records"),
             "hierarchical": clustering["hier_model"].get_silhouette_data().to_dict("records"),
             "gmm_k_por_silhouette": int(bic.loc[bic["silhouette"].idxmax(), "k"]),
+            "abaixo_da_faixa": _abaixo_da_faixa(X),
         },
         "tamanhos": {algo: np.bincount(results[algo].labels).tolist() for algo in ALGOS},
         "comparacao": {
