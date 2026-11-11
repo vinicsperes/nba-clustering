@@ -49,7 +49,7 @@ def results_path(season: str, filtro: str = DEFAULT_FILTER) -> Path:
 # =============================================================================
 # FEATURES DE CLUSTERING
 # 11 variáveis de box-score conforme definido no pré-projeto.
-# Cobrem pontuação, rebote, assistência, defesa e eficiência.
+# Cobrem pontuação, rebote, assistência, defesa, eficiência e erros.
 # =============================================================================
 CLUSTERING_FEATURES = [
     "PTS",      # Pontos por jogo

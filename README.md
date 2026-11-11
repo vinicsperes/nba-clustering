@@ -4,11 +4,13 @@
 
 Este projeto compara três algoritmos de clustering (**K-Means**, **Gaussian Mixture Models (GMM)** e **Clustering Hierárquico Aglomerativo**) aplicados a dados de desempenho de jogadores da NBA, com o objetivo de identificar arquétipos de jogadores e determinar qual algoritmo produz agrupamentos de maior qualidade. A comparação é formal: métricas internas, estabilidade por bootstrap e teste estatístico de Friedman com pós-teste de Wilcoxon.
 
+Código do Trabalho de Conclusão de Curso em Sistemas de Informação do Instituto Federal Catarinense (campus Araquari).
+
 ## Resultados principais (temporada 2024-25)
 
 - **K-Means (k=3) vence em todas as métricas**: Silhouette 0,301, Davies-Bouldin 1,261, Calinski-Harabasz 147,11 e ARI bootstrap 0,847.
 - **Diferença estatisticamente significativa**: Friedman χ² = 122,46 (p = 2,56e-27); os três pares de algoritmos diferem sob Wilcoxon com correção de Bonferroni.
-- **Conclusão robusta**: mantém-se com 9 features em vez de 11, com o recorte alternativo de 15 minutos por jogo e na replicação em 2025-26 (p = 2,86e-31).
+- **Conclusão robusta**: mantém-se com o recorte alternativo de 15 minutos por jogo e na replicação em 2025-26 (p = 2,86e-31). Com 9 features em vez de 11, o K-Means mantém o maior Silhouette e uma partição próxima da original.
 - **Três arquétipos**: jogadores de função, estrelas/organizadores e jogadores de garrafão, com baixa concordância com as posições oficiais (ARI 0,132). 81,7% dos jogadores presentes nas duas temporadas mantêm o arquétipo (39,3% por acaso).
 
 ## Dados
@@ -17,7 +19,7 @@ Este projeto compara três algoritmos de clustering (**K-Means**, **Gaussian Mix
 - **Temporada principal:** 2024-25 (375 jogadores) | **Replicação:** 2025-26 (378 jogadores)
 - **Filtro:** pelo menos 500 minutos jogados na temporada (minutos totais da API, sem arredondamento)
 - **Médias por jogo:** totais da temporada divididos pelo número de jogos
-- **Posições:** congeladas em `data/posicoes.csv` (a NBA não publica a posição por temporada)
+- **Posições:** congeladas em `data/posicoes.csv` (a NBA não publica a posição por temporada). Posições duplas usam a primeira letra: G-F vira Guard, F-G e F-C viram Forward, C-F vira Center
 - **11 features de box-score:**
 
 | Categoria | Features |
@@ -82,7 +84,9 @@ Roda as três rodadas (2024-25, 2024-25 com 15 min/jogo e 2025-26) e a persistê
 
 Uma rodada só: `python main.py --season 2025-26` (ou `--filtro 15mpg`). Os scripts de análise também rodam sozinhos, com `--season`.
 
-### Re-coletar os dados
+### Coletar os dados de novo
+
+Os CSVs de `data/` são os usados na monografia. A API pode corrigir estatísticas depois da coleta, então uma coleta nova pode não reproduzir exatamente os mesmos números.
 
 ```bash
 python src/data_collection.py --season 2024-25

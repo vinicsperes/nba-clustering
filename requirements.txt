@@ -1,4 +1,4 @@
-# Dependências do projeto — versões fixadas para reprodutibilidade.
+# Dependências do projeto, com versões fixadas para reprodutibilidade.
 # Ambiente verificado: Python 3.14. Estas versões reproduzem exatamente os
 # resultados reportados na monografia (random_state=42).
 
